@@ -1,52 +1,59 @@
 #!/usr/bin/env bash
 
-# Ensure script runs as root
+# Ensure script runs as root where needed
 if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root: sudo $0"
-  exit 1
+  echo "Some steps require root. You may be prompted for sudo."
 fi
 
-# ---------- Check and install prerequisites ----------
-echo "Checking prerequisites..."
+# ---------- Install prerequisites ----------
+echo "Updating package list and installing prerequisites..."
+sudo apt update
+sudo apt install -y linux-headers-$(uname -r) v4l2loopback-dkms ffmpeg python3 kmod git
 
-# Update package list
-apt update
-
-# Install v4l2loopback-dkms and linux headers
-apt install -y v4l2loopback-dkms linux-headers-$(uname -r) ffmpeg
-
-# Check Python3
-if ! command -v python3 &> /dev/null; then
-  echo "Python3 not found. Installing..."
-  apt install -y python3
+# ---------- Clone virtualcam script ----------
+if [ ! -d "$HOME/virtualcam" ]; then
+  echo "Cloning virtualcam repository..."
+  git clone git@github.com:codebyhasan/virtualcam.git "$HOME/virtualcam"
+else
+  echo "virtualcam repository already exists at $HOME/virtualcam"
 fi
 
-# Check modinfo
-if ! command -v modinfo &> /dev/null; then
-  echo "Installing kmod for modinfo..."
-  apt install -y kmod
+# ---------- Install virtualcam ----------
+echo "Installing virtualcam..."
+chmod +x "$HOME/virtualcam/virtualcam.py"
+mkdir -p "$HOME/.local/bin"
+mv "$HOME/virtualcam/virtualcam.py" "$HOME/.local/bin/virtualcam"
+
+# ---------- Add ~/.local/bin to PATH permanently ----------
+SHELL_RC="$HOME/.bashrc"
+if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$SHELL_RC"; then
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+  echo "Added ~/.local/bin to PATH in $SHELL_RC"
 fi
+# Apply immediately for current session
+export PATH="$HOME/.local/bin:$PATH"
 
 # ---------- Configure v4l2loopback ----------
 CONF_FILE="/etc/modprobe.d/v4l2loopback.conf"
-echo "Creating modprobe config..."
-echo 'options v4l2loopback video_nr=0 card_label="VirtualCam" exclusive_caps=1' > "$CONF_FILE"
+echo "Creating modprobe configuration..."
+echo 'options v4l2loopback video_nr=0 card_label="VirtualCam" exclusive_caps=1' | sudo tee "$CONF_FILE"
 
 echo "Updating initramfs..."
-update-initramfs -u
+sudo update-initramfs -u
 
-# Reload module
 echo "Reloading v4l2loopback module..."
-modprobe -r v4l2loopback 2>/dev/null
-modprobe v4l2loopback
+sudo modprobe -r v4l2loopback 2>/dev/null
+sudo modprobe v4l2loopback
 
-# ---------- Verify ----------
+# ---------- Verify virtual camera ----------
 if [ -e /dev/video0 ]; then
   echo "Virtual camera created successfully at /dev/video0:"
   ls -l /dev/video0
 else
-  echo "Failed to create /dev/video0. Try running:"
+  echo "Failed to create /dev/video0."
+  echo "Try running manually:"
   echo "sudo modprobe v4l2loopback video_nr=0 card_label=\"VirtualCam\" exclusive_caps=1"
 fi
 
-echo "All done! This setup will persist after reboot."
+echo "Setup complete! You can now use the 'virtualcam' command."
+echo "Run 'virtualcam' to start in background or 'virtualcam start' for foreground."
